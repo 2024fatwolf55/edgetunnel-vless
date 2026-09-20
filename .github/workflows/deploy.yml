@@ -1,0 +1,64 @@
+name: Deploy to CloudFlare Worker
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '_worker.js'
+      - 'wrangler.toml'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - preview
+
+permissions:
+  contents: read
+  deployments: write
+
+jobs:
+  deploy:
+    name: Deploy to CloudFlare
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.event.inputs.environment || 'production' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy to CloudFlare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: '.'
+          command: >-
+            deploy
+            --name edgetunnel-vless
+            --compatibility-date 2025-11-04
+            --compatibility-flag nodejs_compat
+
+      - name: Verify deployment
+        run: |
+          # Wait for deployment to propagate
+          sleep 10
+          
+          # Check version endpoint
+          VERSION=$(curl -s "https://vless.fatwolf55.asia/version?uuid=fc2bdade-9fa9-4bf9-9695-7983cb0c1f11" | grep -o '"Version":[0-9]*' | head -1)
+          echo "Deployment verified - Worker version: $VERSION"
+          
+          # Check subscription endpoint
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://vless.fatwolf55.asia/sub?token=f05819ca0a1ab7fe7faf6682a22165a7")
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✓ Subscription endpoint working (HTTP $HTTP_CODE)"
+          else
+            echo "✗ Subscription endpoint failed (HTTP $HTTP_CODE)"
+            exit 1
+          fi
